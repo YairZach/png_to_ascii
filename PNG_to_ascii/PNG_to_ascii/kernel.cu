@@ -19,10 +19,61 @@ using std::cin;
 
 const string brightness = "$@B%8&WM#*oahkbdpqwmZO0QLCJUYXzcvunxrjft/\\|()1{}[]?-_ + ~<>i!lI;:,\"^`'.";
 
-__global__ void monochrome(int* width, unsigned char* in, unsigned char* out) {
+/// <summary>
+/// this function turns a pixel in an array of pixels monochrome running on gpu
+/// </summary>
+/// <param name="width">the horizontal resolution of the image</param>
+/// <param name="in">array of rgb pixels, formatted with 3 fields for each pixel.</param>
+/// <param name="out">array of monochrome pixels, out param</param>
+/// <returns>void</returns>
+__global__ void monochrome(const int& width, const unsigned char* in, unsigned char* out) {
 	const int x = threadIdx.x;
-	const int y = threadIdx.y;
-	out[y * *width + x] = ((int)in[y * *width + x + 0] + (int)in[y * *width + x + 1] + (int)in[y * *width + x + 2]) / 3;
+	const int y = blockIdx.x;
+	out[y * width + x] = ((int)in[y * width + x + 0] + (int)in[y * width + x + 1] + (int)in[y * width + x + 2]) / 3;
+}
+
+
+/// <summary>
+/// this funtion chunks an array of monochrome pixels into a smaller array of monochrome pixels (downsacling)
+/// </summary>
+/// <param name="chunkSizeX">the hrizontal amout of pixels to merge</param>
+/// <param name="chunkSizeY">the vertical amount of pixel to merge</param>
+/// <param name="width">the width of one line of the "in" array</param>
+/// <param name="in"> an array filled with monochrome Pixels</param>
+/// <param name="out">the downscaled array, out param</param>
+/// <returns>void</returns>
+__global__ void Chunking(const int& chunkSizeX, const int& chunkSizeY, const int& width, const unsigned char* in, unsigned char* out) {
+	const int x = threadIdx.x;
+	const int y = blockIdx.x;
+	int *sum = new int[chunkSizeY];
+
+	sumChunk<<<1, chunkSizeY>>>(y * width + x, chunkSizeX, width, in, sum);
+
+	int brt = 0;
+	for (int i = 0; i < chunkSizeY; i++)
+	{
+		brt += sum[i];
+	}
+
+	brt /= chunkSizeX * chunkSizeY;
+	out[x / chunkSizeX, y / chunkSizeY] = brt;
+}
+
+/// <summary>
+/// this function sums all the values in a given slice of an array
+/// </summary>
+/// <param name="begins">where the slice begins</param>
+/// <param name="length">the length of the slice</param>
+/// <param name="width">the horizontal size of the "in" array</param>
+/// <param name="in">array of WORD numbers</param>
+/// <param name="out">array of WORD numbers, out param</param>
+/// <returns>void</returns>
+__global__ void sumChunk(const int& begins, const int& length, const int& width, const unsigned char* in, int* out) {
+	const int x = threadIdx.x * width + begins;
+	int out = 0;
+	for (int i = 0; i < length; i++) {
+		out[threadIdx.x] += in[x + i];
+	}
 }
 
 int main(char** argv, int argc) {
@@ -53,10 +104,12 @@ int main(char** argv, int argc) {
 
 	
 
+	dim3 threadsPerBlock(x);
+	int numBlocks = y;
+	monochrome<<<numBlocks, threadsPerBlock.x>>>(cudaWidth, cudaData, cudaMono);
 
-	int numBlocks = 1;
-	dim3 threadsPerBlock(x, y);
-	monochrome<<<numBlocks, threadsPerBlock>>>(cudaWidth, cudaData, cudaMono);
+	cudaDeviceSynchronize();
+
 	cudaMemcpy(mono, cudaMono, x*y, cudaMemcpyDeviceToHost);
 
 
